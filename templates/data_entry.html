@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>商品金额录入 - Tailwind UI</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        /* 之前用于高亮系统生成密钥的样式，现在可能不需要了，但保留无妨 */
+        .highlight-secret {
+            background-color: #fefcbf; 
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 antialiased flex flex-col min-h-screen">
+    <div class="container mx-auto max-w-3xl py-8 px-4 sm:px-6 lg:px-8 flex-grow">
+        <div class="bg-white shadow-lg rounded-lg p-6 md:p-8">
+            <h1 class="text-2xl sm:text-3xl font-bold text-gray-900 mb-6 text-center">订单金额管理</h1>
+            
+            <div id="message-area" class="mb-4"></div>
+
+            <div class="space-y-4">
+                <div>
+                    <label for="user_id" class="block text-sm font-medium text-gray-700 mb-1">用户ID:</label>
+                    <input type="text" id="user_id" name="user_id" required 
+                           class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                </div>
+                <div>
+                    <label for="item_value" class="block text-sm font-medium text-gray-700 mb-1">商品金额:</label>
+                    <input type="text" id="item_value" name="item_value" placeholder="输入多个金额，用空格或逗号分隔" 
+                           class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                    <p class="mt-1 text-xs text-gray-500">“添加/删除金额”时需要此项。</p>
+                </div>
+                <div>
+                    <label for="secret_key" class="block text-sm font-medium text-gray-700 mb-1">密钥 (Secret Key):</label>
+                    <input type="password" id="secret_key" name="secret_key" 
+                           class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" 
+                           placeholder="设置或输入您的密钥">
+                    <p class="mt-1 text-xs text-gray-500">新用户首次添加金额时需设定此密钥。现有用户操作时需提供对应密钥。</p>
+                </div>
+                <div class="flex flex-wrap gap-2 sm:gap-3 pt-2">
+                    <button onclick="addItem()"
+                            class="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 flex-grow sm:flex-grow-0">
+                        添加金额
+                    </button>
+                    <button onclick="deleteItem()"
+                            class="inline-flex items-center justify-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 flex-grow sm:flex-grow-0">
+                        删除金额
+                    </button>
+                    <button onclick="deleteUser()"
+                            class="inline-flex items-center justify-center px-4 py-2 border border-red-500 text-sm font-medium rounded-md shadow-sm text-white bg-red-500 hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-400 flex-grow sm:flex-grow-0">
+                        删除用户
+                    </button>
+                     <button onclick="viewItems()"
+                            class="inline-flex items-center justify-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 flex-grow sm:flex-grow-0">
+                        查看单用户列表
+                    </button>
+                    <button onclick="viewAllData()"
+                            class="inline-flex items-center justify-center px-4 py-2 border border-blue-500 text-sm font-medium rounded-md shadow-sm text-white bg-blue-500 hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-400 flex-grow sm:flex-grow-0">
+                        查看所有数据
+                    </button>
+                </div>
+            </div>
+
+            <div id="user-items-display" style="display: none;" class="mt-8 bg-gray-50 p-4 sm:p-6 rounded-md border border-gray-200">
+                 <h3 id="current-user-id-display" class="text-lg font-semibold text-gray-900 mb-3"></h3>
+                 <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-100">
+                            <tr>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    金额
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="user-items-list-tbody" class="bg-white divide-y divide-gray-200">
+                           </tbody>
+                    </table>
+                 </div>
+            </div>
+
+            <div id="all-data-display" style="display: none;" class="mt-8 bg-blue-50 p-4 sm:p-6 rounded-md border border-blue-200">
+                 <h3 class="text-xl font-semibold text-gray-900 mb-4">所有用户数据</h3>
+                 <div id="all-user-data-content" class="overflow-x-auto">
+                     </div>
+            </div>
+
+            <div class="mt-8 text-center">
+                <a href="/find_team" class="text-sm font-medium text-indigo-600 hover:text-indigo-500">
+                    前往查找队伍页面 &rarr;
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <footer class="bg-gray-800 text-white py-6 mt-auto">
+        <div class="container mx-auto max-w-2xl text-center px-4 sm:px-6 lg:px-8">
+            <p class="text-sm">&copy; <span id="current-year"></span> 1zero224. All Rights Reserved.</p>
+        </div>
+    </footer>
+
+    <script>
+        const messageArea = document.getElementById('message-area');
+        const userIdInput = document.getElementById('user_id');
+        const itemValueInput = document.getElementById('item_value');
+        const secretKeyInput = document.getElementById('secret_key');
+        
+        const userItemsDisplay = document.getElementById('user-items-display');
+        const currentUserDisplay = document.getElementById('current-user-id-display');
+        const userItemsTableBody = document.getElementById('user-items-list-tbody');
+
+        const allDataDisplay = document.getElementById('all-data-display');
+        const allUserDataContent = document.getElementById('all-user-data-content');
+
+        const initialAllUserData = JSON.parse('{{ all_user_data_initially | tojson | safe }}');
+
+        function showMessage(htmlContent, type = 'success') {
+            const alertTypeClass = type === 'success' 
+                ? 'bg-green-100 border-green-400 text-green-700' 
+                : 'bg-red-100 border-red-400 text-red-700';
+            messageArea.innerHTML = `<div class="border-l-4 p-4 ${alertTypeClass}" role="alert">
+                                        <p class="font-bold">${type === 'success' ? '成功' : '错误'}</p>
+                                        <div>${htmlContent}</div>
+                                     </div>`;
+            // Keep messages displayed a bit longer, or until next action
+            setTimeout(() => {
+                if (messageArea.querySelector(`div > div`).innerHTML === htmlContent) { // Clear only if it's the same message
+                    messageArea.innerHTML = '';
+                }
+            }, 7000);
+        }
+
+        async function sendRequest(url, method, body) {
+            try {
+                const options = {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                };
+                if (body) {
+                    options.body = JSON.stringify(body);
+                }
+                const response = await fetch(url, options);
+                const result = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(result.message || `HTTP error! status: ${response.status}`);
+                }
+                return result;
+            } catch (error) {
+                console.error('Request failed:', error);
+                showMessage(`操作失败: ${error.message}`, 'error');
+                return null; 
+            }
+        }
+
+        async function addItem() {
+            const userId = userIdInput.value.trim();
+            const itemValueStr = itemValueInput.value.trim();
+            const secretKey = secretKeyInput.value.trim(); 
+
+            if (!userId || !itemValueStr) {
+                showMessage("用户ID和商品金额不能为空", 'error');
+                return;
+            }
+            if (!secretKey) { // Secret key is now always required for adding items
+                showMessage("密钥不能为空。新用户首次添加金额时需设定密钥，现有用户需提供密钥。", 'error');
+                return;
+            }
+
+            const itemValues = itemValueStr.split(/[\s,]+/).filter(val => val.trim() !== '');
+            for (const value of itemValues) {
+                if (isNaN(parseInt(value)) || parseInt(value) <= 0) {
+                    showMessage("所有商品金额必须是有效的正整数", 'error');
+                    return;
+                }
+            }
+
+            let successCount = 0;
+            let failCount = 0;
+            let lastResultMessage = '';
+
+            for (const value of itemValues) {
+                const payload = { user_id: userId, item_value: value, secret_key: secretKey };
+                const result = await sendRequest('/api/add_item', 'POST', payload);
+                
+                if (result && result.success) {
+                    successCount++;
+                    lastResultMessage = result.message; // Capture last success message
+                } else {
+                    failCount++;
+                    if (result && result.message) { 
+                        showMessage(result.message, 'error');
+                        return; // Stop on first error
+                    } else {
+                        showMessage("添加金额时发生未知错误。", "error");
+                        return; // Stop on first error
+                    }
+                }
+            }
+
+            if (successCount > 0) {
+                showMessage(lastResultMessage || `成功添加 ${successCount} 个金额。`, 'success');
+                itemValueInput.value = ''; 
+                // Do not clear secretKeyInput.value, user might want to perform more actions.
+                if(userItemsDisplay.style.display !== 'none' && currentUserDisplay.textContent.includes(userId)) {
+                    viewItems(); 
+                }
+                if (allDataDisplay.style.display !== 'none') {
+                    viewAllData(); 
+                }
+            } else if (failCount > 0 && successCount === 0) {
+                // Error message would have been shown by sendRequest or specific logic above
+                 if (messageArea.innerHTML === '') { 
+                    showMessage("添加金额失败", 'error');
+                }
+            }
+        }
+
+        async function deleteItem() {
+            const userId = userIdInput.value.trim();
+            const itemValueStr = itemValueInput.value.trim();
+            const secretKey = secretKeyInput.value.trim();
+
+            if (!userId || !itemValueStr) {
+                showMessage("用户ID和要删除的商品金额不能为空", 'error');
+                return;
+            }
+            if (!secretKey) {
+                showMessage("请输入密钥以删除金额", 'error');
+                return;
+            }
+            const itemValues = itemValueStr.split(/[\s,]+/).filter(val => val.trim() !== '');
+             for (const value of itemValues) {
+                if (isNaN(parseInt(value))) {
+                    showMessage("所有要删除的商品金额必须是有效的整数", 'error');
+                    return;
+                }
+            }
+
+            let successCount = 0;
+            let failCount = 0;
+            let lastResultMessage = '';
+
+            for (const value of itemValues) {
+                const result = await sendRequest('/api/delete_item', 'POST', { user_id: userId, item_value: value, secret_key: secretKey });
+                if (result && result.success) {
+                    successCount++;
+                    lastResultMessage = result.message;
+                } else {
+                    failCount++;
+                     if (result && result.message) { 
+                        showMessage(result.message, 'error');
+                        return; 
+                    } else {
+                        showMessage("删除金额时发生未知错误。", "error");
+                        return;
+                    }
+                }
+            }
+
+            if (successCount > 0) {
+                showMessage(lastResultMessage || `成功删除 ${successCount} 个金额`, 'success');
+                itemValueInput.value = ''; 
+                if(userItemsDisplay.style.display !== 'none' && currentUserDisplay.textContent.includes(userId)) {
+                    viewItems(); 
+                }
+                 if (allDataDisplay.style.display !== 'none') {
+                    viewAllData(); 
+                }
+            } else if (failCount > 0 && successCount === 0) {
+                 if (messageArea.innerHTML === '') {
+                    showMessage("删除金额失败或未找到指定金额", 'error');
+                 }
+            }
+        }
+
+        async function viewItems() {
+            const userId = userIdInput.value.trim();
+            if (!userId) {
+                showMessage("请输入要查看的用户ID", 'error');
+                userItemsDisplay.style.display = 'none';
+                return;
+            }
+            allDataDisplay.style.display = 'none'; 
+
+            try {
+                const result = await sendRequest(`/api/get_user_items?user_id=${encodeURIComponent(userId)}`, 'GET');
+
+                if (result && result.user_id) { 
+                    currentUserDisplay.textContent = `用户 '${result.user_id}' 的当前金额列表:`;
+                    userItemsTableBody.innerHTML = ''; 
+
+                    if (result.items && result.items.length > 0) {
+                        result.items.forEach(item => {
+                            const tr = document.createElement('tr');
+                            const tdItem = document.createElement('td');
+                            tdItem.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-700';
+                            tdItem.textContent = item;
+                            tr.appendChild(tdItem);
+                            userItemsTableBody.appendChild(tr);
+                        });
+                    } else {
+                        const tr = document.createElement('tr');
+                        const tdNoData = document.createElement('td');
+                        tdNoData.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500 italic';
+                        tdNoData.colSpan = 1;
+                        tdNoData.textContent = '该用户暂无金额记录。';
+                        tr.appendChild(tdNoData);
+                        userItemsTableBody.appendChild(tr);
+                    }
+                    userItemsDisplay.style.display = 'block';
+                } else if (result && result.error) {
+                     showMessage(`获取列表失败: ${result.error}`, 'error');
+                     userItemsDisplay.style.display = 'none';
+                } else {
+                    throw new Error("Invalid response from server for get_user_items");
+                }
+            } catch (error) {
+                console.error('Failed to fetch items:', error);
+                showMessage(`获取单用户列表失败: ${error.message}`, 'error');
+                userItemsDisplay.style.display = 'none';
+            }
+        }
+
+        async function deleteUser() {
+            const userId = userIdInput.value.trim();
+            const secretKey = secretKeyInput.value.trim();
+
+            if (!userId) {
+                showMessage("请输入要删除的用户ID", 'error');
+                return;
+            }
+            if (!secretKey) {
+                showMessage("请输入密钥以删除用户", 'error');
+                return;
+            }
+
+            if (!confirm(`确定要删除用户 '${userId}' 及其所有数据吗？此操作无法撤销。`)) {
+                return;
+            }
+
+            const result = await sendRequest('/api/delete_user', 'POST', { user_id: userId, secret_key: secretKey });
+            if (result && result.success) {
+                showMessage(result.message, 'success');
+                userIdInput.value = ''; 
+                itemValueInput.value = '';
+                secretKeyInput.value = ''; 
+                userItemsDisplay.style.display = 'none'; 
+                if (allDataDisplay.style.display !== 'none') {
+                    viewAllData(); 
+                }
+            } else if (result && result.message) {
+                showMessage(result.message, 'error');
+            } else {
+                 if (messageArea.innerHTML === '') { // Only show generic if nothing else was shown
+                    showMessage("删除用户时发生未知错误。", 'error');
+                 }
+            }
+        }
+        
+        function renderAllData(data) {
+            allUserDataContent.innerHTML = ''; 
+            if (Object.keys(data).length === 0) {
+                allUserDataContent.innerHTML = '<p class="text-gray-500 italic">目前没有用户数据。</p>';
+                return;
+            }
+
+            const table = document.createElement('table');
+            table.className = 'min-w-full divide-y divide-gray-200';
+            
+            const thead = document.createElement('thead');
+            thead.className = 'bg-gray-100';
+            thead.innerHTML = `
+                <tr>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">用户 ID</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">金额列表</th>
+                </tr>
+            `;
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            tbody.className = 'bg-white divide-y divide-gray-200';
+
+            for (const userId in data) {
+                const tr = document.createElement('tr');
+                
+                const tdUserId = document.createElement('td');
+                tdUserId.className = 'px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900';
+                tdUserId.textContent = userId;
+                tr.appendChild(tdUserId);
+
+                const tdItems = document.createElement('td');
+                tdItems.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500';
+                if (data[userId].length > 0) {
+                    tdItems.textContent = data[userId].join(', ');
+                } else {
+                    tdItems.textContent = '无金额记录';
+                    tdItems.classList.add('italic');
+                }
+                tr.appendChild(tdItems);
+                tbody.appendChild(tr);
+            }
+            table.appendChild(tbody);
+            allUserDataContent.appendChild(table);
+        }
+
+        async function viewAllData(forceFetch = true) {
+            userItemsDisplay.style.display = 'none'; 
+            allDataDisplay.style.display = 'block';
+            
+            try {
+                const result = await sendRequest('/api/get_all_data', 'GET');
+                if (result && result.success) {
+                    renderAllData(result.all_user_data);
+                } else if (result && result.message) {
+                    showMessage(`获取所有数据失败: ${result.message}`, 'error');
+                    allUserDataContent.innerHTML = '<p class="text-red-500 italic">无法加载数据。</p>';
+                } else {
+                     throw new Error("Invalid response from server when fetching all data.");
+                }
+            } catch (error) {
+                 console.error('Failed to fetch all data:', error);
+                showMessage(`获取所有数据失败: ${error.message}`, 'error');
+                allUserDataContent.innerHTML = '<p class="text-red-500 italic">获取所有数据时发生错误。</p>';
+            }
+        }
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            // No default data loading for all users initially based on current setup
+        });
+
+        document.getElementById('current-year').textContent = new Date().getFullYear();
+
+        document.getElementById('current-year-footer').textContent = new Date().getFullYear();
+
+
+    </script>
+</body>
+</html>

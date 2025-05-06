@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>查找队伍组合 - Tailwind UI</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 text-gray-800 antialiased flex flex-col min-h-screen">
+    <div class="container mx-auto max-w-3xl py-8 px-4 sm:px-6 lg:px-8">
+        <div class="bg-white shadow-lg rounded-lg p-6 md:p-8">
+            <h1 class="text-2xl sm:text-3xl font-bold text-gray-900 mb-6 text-center">查找队伍组合</h1>
+            
+            <div id="message-area" class="mb-4"></div>
+
+            <div class="space-y-4">
+                <div>
+                    <label for="user_id" class="block text-sm font-medium text-gray-700 mb-1">你的用户ID:</label>
+                    <input type="text" id="user_id" name="user_id" required
+                           class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                </div>
+                <div>
+                    <label for="target_sum" class="block text-sm font-medium text-gray-700 mb-1">目标金额:</label>
+                    <input type="number" id="target_sum" name="target_sum" min="1" required
+                           class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                </div>
+                <div class="pt-2">
+                    <button onclick="findTeams()"
+                            class="w-full inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        查找队伍
+                    </button>
+                </div>
+            </div>
+
+            <div id="results-area" style="display: none;" class="mt-8">
+                <h2 class="text-xl font-semibold text-gray-900 mb-4">查找结果:</h2>
+                <div id="teams-list" class="space-y-4">
+                    </div>
+            </div>
+            
+            <div class="mt-8 text-center">
+                <a href="/" class="text-sm font-medium text-indigo-600 hover:text-indigo-500">
+                    &larr; 返回订单金额管理页面
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <footer class="bg-gray-800 text-white py-6 mt-auto">
+        <div class="container mx-auto max-w-3xl text-center px-4 sm:px-6 lg:px-8">
+            <p class="text-sm">&copy; <span id="current-year-footer"></span> 1zero224. All Rights Reserved.</p>
+        </div>
+    </footer>
+    <script>
+        const messageArea = document.getElementById('message-area');
+        const userIdInput = document.getElementById('user_id');
+        const targetSumInput = document.getElementById('target_sum');
+        const resultsArea = document.getElementById('results-area');
+        const teamsListDiv = document.getElementById('teams-list');
+
+        function showMessage(text, type = 'success') {
+            const alertTypeClass = type === 'success' 
+                ? 'bg-green-100 border-green-400 text-green-700' 
+                : 'bg-red-100 border-red-400 text-red-700';
+            messageArea.innerHTML = `<div class="border-l-4 p-4 ${alertTypeClass}" role="alert">
+                                        <p class="font-bold">${type === 'success' ? '成功' : '错误'}</p>
+                                        <p>${text}</p>
+                                     </div>`;
+            setTimeout(() => {
+                messageArea.innerHTML = '';
+            }, 5000);
+        }
+
+        async function findTeams() {
+            const userId = userIdInput.value.trim();
+            const targetSum = targetSumInput.value.trim();
+
+            if (!userId || !targetSum) {
+                showMessage("你的用户ID和目标金额不能为空", 'error');
+                resultsArea.style.display = 'none';
+                return;
+            }
+            if (parseInt(targetSum) <= 0) {
+                 showMessage("目标金额必须是正数", 'error');
+                 return;
+            }
+
+            messageArea.innerHTML = '';
+            teamsListDiv.innerHTML = '<p class="text-gray-500">正在查找...</p>';
+            resultsArea.style.display = 'block';
+
+            try {
+                const response = await fetch('/api/find_teams', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ user_id: userId, target_sum: targetSum }),
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                     throw new Error(result.message || `HTTP error! status: ${response.status}`);
+                }
+
+                if (result.success) {
+                    displayTeams(result.teams);
+                } else {
+                    showMessage(result.message, 'error');
+                    teamsListDiv.innerHTML = '<p class="text-red-600">查找失败。</p>';
+                }
+
+            } catch (error) {
+                console.error('Find teams failed:', error);
+                showMessage(`查找队伍失败: ${error.message}`, 'error');
+                teamsListDiv.innerHTML = `<p class="text-red-600">查找过程中发生错误。</p>`;
+            }
+        }
+
+        function displayTeams(teams) {
+            teamsListDiv.innerHTML = ''; 
+
+            if (!teams || teams.length === 0) {
+                teamsListDiv.innerHTML = '<p class="text-gray-500 italic">未找到符合条件的队伍组合。</p>';
+                return;
+            }
+
+            teams.forEach((team, index) => {
+                const teamDiv = document.createElement('div');
+                teamDiv.className = 'bg-gray-50 p-4 rounded-lg shadow';
+                
+                let teamHtml = `<h3 class="text-lg font-semibold text-indigo-700 mb-2">组合 ${index + 1} <span class="text-sm font-normal text-gray-600">(共 ${team.length} 人)</span></h3>`;
+                teamHtml += '<ul class="divide-y divide-gray-200">';
+                let currentSum = 0;
+                team.forEach(member => {
+                    teamHtml += `<li class="py-2 flex justify-between items-center">
+                                    <span class="text-sm text-gray-700">用户 <strong>${member.user_id}</strong></span>
+                                    <span class="text-sm text-gray-900 font-medium">贡献 ${member.item_value}</span>
+                                 </li>`;
+                    currentSum += member.item_value;
+                });
+                teamHtml += '</ul>';
+                teamHtml += `<div class="mt-3 pt-3 border-t border-gray-200 flex justify-between items-center">
+                                <span class="text-md font-semibold text-gray-800">总计:</span>
+                                <span class="text-md font-bold text-indigo-600">${currentSum}</span>
+                             </div>`;
+                teamDiv.innerHTML = teamHtml;
+                teamsListDiv.appendChild(teamDiv);
+            });
+        }
+    </script>
+</body>
+</html>
