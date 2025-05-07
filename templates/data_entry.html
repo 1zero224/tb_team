@@ -33,7 +33,7 @@
                     <p class="mt-1 text-xs text-gray-500">新用户首次添加金额时需设定此密钥。现有用户操作时需提供对应密钥。</p>
                 </div>
                 <div class="flex flex-wrap gap-2 sm:gap-3 pt-2">
-                    <button onclick="addItem()"
+                    <button id="addItemButton" onclick="addItem()"
                             class="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 flex-grow sm:flex-grow-0">
                         添加金额
                     </button>
@@ -100,6 +100,7 @@
         const userIdInput = document.getElementById('user_id');
         const itemValueInput = document.getElementById('item_value');
         const secretKeyInput = document.getElementById('secret_key');
+        const addItemButton = document.getElementById('addItemButton'); 
         
         const userItemsDisplay = document.getElementById('user-items-display');
         const currentUserDisplay = document.getElementById('current-user-id-display');
@@ -108,7 +109,7 @@
         const allDataDisplay = document.getElementById('all-data-display');
         const allUserDataContent = document.getElementById('all-user-data-content');
 
-        const initialAllUserData = JSON.parse('{{ all_user_data_initially | tojson | safe }}');
+        let countdownInterval = null; // 用于存储倒计时 interval ID
 
         function showMessage(htmlContent, type = 'success') {
             const alertTypeClass = type === 'success' 
@@ -118,10 +119,10 @@
                                         <p class="font-bold">${type === 'success' ? '成功' : '错误'}</p>
                                         <div>${htmlContent}</div>
                                      </div>`;
-            // Keep messages displayed a bit longer, or until next action
             setTimeout(() => {
-                if (messageArea.querySelector(`div > div`).innerHTML === htmlContent) { // Clear only if it's the same message
-                    messageArea.innerHTML = '';
+                const currentMessageDiv = messageArea.querySelector("div > div");
+                if (currentMessageDiv && currentMessageDiv.innerHTML === htmlContent) {
+                     messageArea.innerHTML = '';
                 }
             }, 7000);
         }
@@ -151,6 +152,42 @@
             }
         }
 
+        function startButtonCooldown(durationInSeconds) {
+            addItemButton.disabled = true;
+            addItemButton.classList.add('opacity-50', 'cursor-not-allowed');
+            
+            let timeLeft = durationInSeconds;
+            addItemButton.textContent = `冷却中 (${timeLeft}秒)`;
+
+            if (countdownInterval) {
+                clearInterval(countdownInterval); // 清除可能存在的旧倒计时
+            }
+
+            countdownInterval = setInterval(() => {
+                timeLeft--;
+                if (timeLeft > 0) {
+                    addItemButton.textContent = `冷却中 (${timeLeft}秒)`;
+                } else {
+                    clearInterval(countdownInterval);
+                    countdownInterval = null;
+                    addItemButton.disabled = false;
+                    addItemButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                    addItemButton.textContent = '添加金额';
+                }
+            }, 1000);
+        }
+
+        function resetButtonState() {
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+            }
+            addItemButton.disabled = false;
+            addItemButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            addItemButton.textContent = '添加金额';
+        }
+
+
         async function addItem() {
             const userId = userIdInput.value.trim();
             const itemValueStr = itemValueInput.value.trim();
@@ -160,63 +197,61 @@
                 showMessage("用户ID和商品金额不能为空", 'error');
                 return;
             }
-            if (!secretKey) { // Secret key is now always required for adding items
+            if (!secretKey) {
                 showMessage("密钥不能为空。新用户首次添加金额时需设定密钥，现有用户需提供密钥。", 'error');
                 return;
             }
 
-            const itemValues = itemValueStr.split(/[\s,]+/).filter(val => val.trim() !== '');
-            for (const value of itemValues) {
-                if (isNaN(parseInt(value)) || parseInt(value) <= 0) {
+            const itemValuesRaw = itemValueStr.split(/[\s,]+/).filter(val => val.trim() !== '');
+            const itemValuesParsed = [];
+
+            if (itemValuesRaw.length === 0) {
+                showMessage("请输入至少一个有效的商品金额", 'error');
+                return;
+            }
+
+            for (const value of itemValuesRaw) {
+                const parsedValue = parseInt(value);
+                if (isNaN(parsedValue) || parsedValue <= 0) {
                     showMessage("所有商品金额必须是有效的正整数", 'error');
                     return;
                 }
+                itemValuesParsed.push(parsedValue);
             }
 
-            let successCount = 0;
-            let failCount = 0;
-            let lastResultMessage = '';
+            const payload = { 
+                user_id: userId, 
+                item_values: itemValuesParsed, 
+                secret_key: secretKey 
+            };
+            
+            // 初始禁用按钮，但不开始倒计时
+            addItemButton.disabled = true;
+            addItemButton.classList.add('opacity-50', 'cursor-not-allowed');
+            addItemButton.textContent = '处理中...'; // 发送请求时显示“处理中”
 
-            for (const value of itemValues) {
-                const payload = { user_id: userId, item_value: value, secret_key: secretKey };
-                const result = await sendRequest('/api/add_item', 'POST', payload);
-                
-                if (result && result.success) {
-                    successCount++;
-                    lastResultMessage = result.message; // Capture last success message
-                } else {
-                    failCount++;
-                    if (result && result.message) { 
-                        showMessage(result.message, 'error');
-                        return; // Stop on first error
-                    } else {
-                        showMessage("添加金额时发生未知错误。", "error");
-                        return; // Stop on first error
-                    }
-                }
-            }
-
-            if (successCount > 0) {
-                showMessage(lastResultMessage || `成功添加 ${successCount} 个金额。`, 'success');
+            const result = await sendRequest('/api/add_item', 'POST', payload);
+            
+            if (result && result.success) {
+                showMessage(result.message, 'success'); 
                 itemValueInput.value = ''; 
-                // Do not clear secretKeyInput.value, user might want to perform more actions.
                 if(userItemsDisplay.style.display !== 'none' && currentUserDisplay.textContent.includes(userId)) {
                     viewItems(); 
                 }
                 if (allDataDisplay.style.display !== 'none') {
                     viewAllData(); 
                 }
-            } else if (failCount > 0 && successCount === 0) {
-                // Error message would have been shown by sendRequest or specific logic above
-                 if (messageArea.innerHTML === '') { 
-                    showMessage("添加金额失败", 'error');
-                }
+                // 成功后，启动冷却倒计时
+                startButtonCooldown(5); // 5秒冷却
+            } else {
+                // 如果失败，立即重置按钮状态
+                resetButtonState();
             }
         }
 
         async function deleteItem() {
             const userId = userIdInput.value.trim();
-            const itemValueStr = itemValueInput.value.trim();
+            const itemValueStr = itemValueInput.value.trim(); 
             const secretKey = secretKeyInput.value.trim();
 
             if (!userId || !itemValueStr) {
@@ -227,9 +262,13 @@
                 showMessage("请输入密钥以删除金额", 'error');
                 return;
             }
-            const itemValues = itemValueStr.split(/[\s,]+/).filter(val => val.trim() !== '');
-             for (const value of itemValues) {
-                if (isNaN(parseInt(value))) {
+            const itemValuesToDelete = itemValueStr.split(/[\s,]+/).filter(val => val.trim() !== '');
+            if (itemValuesToDelete.length === 0) {
+                 showMessage("请输入至少一个要删除的商品金额", 'error');
+                return;
+            }
+            for (const value of itemValuesToDelete) {
+                if (isNaN(parseInt(value))) { // No need for positive check for deletion
                     showMessage("所有要删除的商品金额必须是有效的整数", 'error');
                     return;
                 }
@@ -238,25 +277,28 @@
             let successCount = 0;
             let failCount = 0;
             let lastResultMessage = '';
+            let firstErrorMessage = '';
 
-            for (const value of itemValues) {
+            for (const value of itemValuesToDelete) { 
                 const result = await sendRequest('/api/delete_item', 'POST', { user_id: userId, item_value: value, secret_key: secretKey });
                 if (result && result.success) {
                     successCount++;
                     lastResultMessage = result.message;
                 } else {
                     failCount++;
-                     if (result && result.message) { 
-                        showMessage(result.message, 'error');
+                    if (result && result.message && !firstErrorMessage) { 
+                        firstErrorMessage = result.message; 
+                    }
+                    if (firstErrorMessage) {
+                         showMessage(firstErrorMessage, 'error');
+                         return;
+                    } else if (!result) { 
                         return; 
-                    } else {
-                        showMessage("删除金额时发生未知错误。", "error");
-                        return;
                     }
                 }
             }
 
-            if (successCount > 0) {
+            if (successCount > 0 && failCount === 0) { 
                 showMessage(lastResultMessage || `成功删除 ${successCount} 个金额`, 'success');
                 itemValueInput.value = ''; 
                 if(userItemsDisplay.style.display !== 'none' && currentUserDisplay.textContent.includes(userId)) {
@@ -265,10 +307,12 @@
                  if (allDataDisplay.style.display !== 'none') {
                     viewAllData(); 
                 }
-            } else if (failCount > 0 && successCount === 0) {
-                 if (messageArea.innerHTML === '') {
-                    showMessage("删除金额失败或未找到指定金额", 'error');
-                 }
+            } else if (failCount > 0) {
+                if (messageArea.innerHTML === '' && firstErrorMessage) {
+                    showMessage(firstErrorMessage, 'error');
+                } else if (messageArea.innerHTML === '') {
+                    showMessage("删除部分或全部金额失败", 'error');
+                }
             }
         }
 
@@ -284,7 +328,7 @@
             try {
                 const result = await sendRequest(`/api/get_user_items?user_id=${encodeURIComponent(userId)}`, 'GET');
 
-                if (result && result.user_id) { 
+                if (result && typeof result.user_id !== 'undefined') { 
                     currentUserDisplay.textContent = `用户 '${result.user_id}' 的当前金额列表:`;
                     userItemsTableBody.innerHTML = ''; 
 
@@ -301,19 +345,22 @@
                         const tr = document.createElement('tr');
                         const tdNoData = document.createElement('td');
                         tdNoData.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500 italic';
-                        tdNoData.colSpan = 1;
+                        tdNoData.colSpan = 1; 
                         tdNoData.textContent = '该用户暂无金额记录。';
                         tr.appendChild(tdNoData);
                         userItemsTableBody.appendChild(tr);
                     }
                     userItemsDisplay.style.display = 'block';
-                } else if (result && result.error) {
+                } else if (result && result.error) { 
                      showMessage(`获取列表失败: ${result.error}`, 'error');
                      userItemsDisplay.style.display = 'none';
-                } else {
+                } else if (!result) {
+                    userItemsDisplay.style.display = 'none';
+                }
+                 else { // Unexpected response structure
                     throw new Error("Invalid response from server for get_user_items");
                 }
-            } catch (error) {
+            } catch (error) { // Catches errors from the try block itself, or if sendRequest re-throws
                 console.error('Failed to fetch items:', error);
                 showMessage(`获取单用户列表失败: ${error.message}`, 'error');
                 userItemsDisplay.style.display = 'none';
@@ -347,12 +394,6 @@
                 if (allDataDisplay.style.display !== 'none') {
                     viewAllData(); 
                 }
-            } else if (result && result.message) {
-                showMessage(result.message, 'error');
-            } else {
-                 if (messageArea.innerHTML === '') { // Only show generic if nothing else was shown
-                    showMessage("删除用户时发生未知错误。", 'error');
-                 }
             }
         }
         
@@ -389,7 +430,7 @@
 
                 const tdItems = document.createElement('td');
                 tdItems.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500';
-                if (data[userId].length > 0) {
+                if (data[userId] && data[userId].length > 0) {
                     tdItems.textContent = data[userId].join(', ');
                 } else {
                     tdItems.textContent = '无金额记录';
@@ -402,9 +443,10 @@
             allUserDataContent.appendChild(table);
         }
 
-        async function viewAllData(forceFetch = true) {
+        async function viewAllData(forceFetch = true) { // forceFetch not really used here
             userItemsDisplay.style.display = 'none'; 
             allDataDisplay.style.display = 'block';
+            allUserDataContent.innerHTML = '<p class="text-gray-500 italic">正在加载所有数据...</p>'; // Loading message
             
             try {
                 const result = await sendRequest('/api/get_all_data', 'GET');
@@ -413,7 +455,10 @@
                 } else if (result && result.message) {
                     showMessage(`获取所有数据失败: ${result.message}`, 'error');
                     allUserDataContent.innerHTML = '<p class="text-red-500 italic">无法加载数据。</p>';
-                } else {
+                } else if (!result) {
+                     allUserDataContent.innerHTML = '<p class="text-red-500 italic">获取数据时发生网络错误或服务器无响应。</p>';
+                }
+                else {
                      throw new Error("Invalid response from server when fetching all data.");
                 }
             } catch (error) {
@@ -423,15 +468,16 @@
             }
         }
         
-        document.addEventListener('DOMContentLoaded', () => {
-            // No default data loading for all users initially based on current setup
+        document.addEventListener('DOMContentLoaded', function() {
+            try {
+                const yearElement = document.getElementById('current-year');
+                if (yearElement) {
+                    yearElement.textContent = new Date().getFullYear();
+                }
+            } catch (error) {
+                console.error('更新年份时发生错误:', error);
+            }
         });
-
-        document.getElementById('current-year').textContent = new Date().getFullYear();
-
-        document.getElementById('current-year-footer').textContent = new Date().getFullYear();
-
-
     </script>
 </body>
 </html>
