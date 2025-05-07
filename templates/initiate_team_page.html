@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>组队</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        /* 为复制按钮添加一些基本样式 */
+        .copy-link-btn {
+            position: absolute;
+            top: 0.5rem; /* 8px */
+            right: 0.5rem; /* 8px */
+            padding: 0.25rem 0.5rem; /* 4px 8px */
+            font-size: 0.75rem; /* 12px */
+            border-radius: 0.25rem; /* 4px */
+            cursor: pointer;
+            transition: background-color 0.2s;
+            z-index: 10; /* 确保按钮在卡片内容之上 */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 antialiased flex flex-col min-h-screen">
+    <div class="container mx-auto max-w-4xl py-8 px-4 sm:px-6 lg:px-8 flex-grow">
+        <div class="bg-white shadow-lg rounded-lg p-6 md:p-8">
+            <h1 class="text-2xl sm:text-3xl font-bold text-gray-900 mb-6 text-center">组队</h1>
+            
+            <div id="message-area-main" class="mb-4"></div>
+
+            <div class="mb-10 border-b pb-6">
+                <h2 class="text-xl font-semibold text-gray-900 mb-4">我的队伍操作</h2>
+                <div class="space-y-4">
+                    <div>
+                        <label for="session_id" class="block text-sm font-medium text-gray-700 mb-1">场次编号:</label>
+                        <input type="text" id="session_id" placeholder="题目上方有写第几场，请填一个正整数" name="session_id" required
+                               class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                    </div>
+                    <div>
+                        <label for="user_id" class="block text-sm font-medium text-gray-700 mb-1">你的用户ID:</label>
+                        <input type="text" id="user_id" name="user_id" required
+                               class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                    </div>
+                    <div>
+                        <label for="secret_key" class="block text-sm font-medium text-gray-700 mb-1">你的密钥:</label>
+                        <input type="password" id="secret_key" name="secret_key" required
+                               class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                    </div>
+                    <div>
+                        <label for="amount_needed" class="block text-sm font-medium text-gray-700 mb-1">队伍还差金额:</label>
+                        <input type="number" id="amount_needed" name="amount_needed" placeholder="请填一个正整数" min="0" required
+                               class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                    </div>
+                    <div>
+                        <label for="team_invite_link" class="block text-sm font-medium text-gray-700 mb-1">组队邀请链接:</label>
+                        <input type="text" id="team_invite_link" name="team_invite_link" placeholder="例：https://m.tb.cn/h.abcd123" required
+                               class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                    </div>
+                    <div class="flex flex-wrap gap-2 sm:gap-3 pt-2">
+                        <button onclick="initiateTeam()"
+                                class="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 flex-grow sm:flex-grow-0">
+                            发起组队
+                        </button>
+                        <button onclick="updateTeam()"
+                                class="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-yellow-500 hover:bg-yellow-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-400 flex-grow sm:flex-grow-0">
+                            更新队伍信息
+                        </button>
+                        <button onclick="deleteTeam()"
+                                class="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 flex-grow sm:flex-grow-0">
+                            删除队伍
+                        </button>
+                    </div>
+                    <div class="space-y-3 max-h-60 overflow-y-auto">
+                        <p class="text-gray-500 italic">完成组队后请记得删除队伍。</p>
+                    </div>
+                </div>
+                
+                <div id="active-teams-display" class="mt-8">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-3">我发起的队伍</h3>
+                    <div id="user-teams-list" class="space-y-3 max-h-60 overflow-y-auto border p-3 rounded-md bg-gray-50">
+                        <p class="text-gray-500 italic">填写用户ID和密钥后，点击下方按钮可查看。</p>
+                    </div>
+                    <button onclick="fetchUserTeams()" class="mt-2 inline-flex items-center justify-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500">
+                        刷新/查看我的队伍列表
+                    </button>
+                </div>
+            </div>
+
+            <div class="mt-6">
+                <h2 class="text-xl font-semibold text-gray-900 mb-4">公开队伍查找与筛选</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 items-end">
+                    <div>
+                        <label for="filter_session_id" class="block text-sm font-medium text-gray-700 mb-1">按场次号筛选:</label>
+                        <input type="text" id="filter_session_id" name="filter_session_id"
+                               class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="输入场次号 (可选)">
+                    </div>
+                    <button onclick="fetchAllActiveTeams(true)"
+                            class="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 self-end md:mt-6">
+                        筛选场次 / 刷新所有
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 items-end">
+                    <div>
+                        <label for="perfect_match_user_id" class="block text-sm font-medium text-gray-700 mb-1">用户ID:</label>
+                        <input type="text" id="perfect_match_user_id" name="perfect_match_user_id"
+                               class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="输入你的用户ID">
+                    </div>
+                    <button onclick="findPerfectMatch()"
+                            class="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 self-end md:mt-6">
+                        在当前筛选中查找完美符合我的差额的队伍
+                    </button>
+                </div>
+                
+                <div id="teams-display-container" class="mb-6">
+                    <h3 id="teams-display-title" class="text-lg font-semibold text-gray-800 mb-3">队伍列表</h3>
+                    <div id="teams-display-list" class="space-y-3 max-h-96 overflow-y-auto border p-3 rounded-md bg-gray-50">
+                        <p class="text-gray-500 italic">使用上方按钮筛选或查找队伍。</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-10 pt-6 border-t text-center">
+                <a href="/" class="text-sm font-medium text-indigo-600 hover:text-indigo-500">
+                    &larr; 返回我的账户页面
+                </a>
+                 <span class="mx-2 text-gray-400">|</span>
+                <a href="/find_team" class="text-sm font-medium text-indigo-600 hover:text-indigo-500">
+                    前往查找队伍组合页面 &rarr;
+                </a>
+            </div>
+
+        </div>
+    </div>
+
+    <footer class="bg-gray-800 text-white py-6 mt-auto">
+        <div class="container mx-auto max-w-4xl text-center px-4 sm:px-6 lg:px-8">
+            <p class="text-sm">&copy; <span id="current-year-footer"></span> 1zero224. All Rights Reserved.</p>
+        </div>
+    </footer>
+
+    <script>
+        // DOM Element constants
+        const mainMessageArea = document.getElementById('message-area-main');
+        const sessionIdInput = document.getElementById('session_id'); 
+        const userIdInput = document.getElementById('user_id'); 
+        const secretKeyInput = document.getElementById('secret_key'); 
+        const amountNeededInput = document.getElementById('amount_needed'); 
+        const teamInviteLinkInput = document.getElementById('team_invite_link'); 
+        const userTeamsListDiv = document.getElementById('user-teams-list'); 
+        
+        const filterSessionIdInput = document.getElementById('filter_session_id');  
+        const perfectMatchUserIdInput = document.getElementById('perfect_match_user_id'); 
+
+        // Unified display elements
+        const teamsDisplayListDiv = document.getElementById('teams-display-list'); 
+        const teamsDisplayTitle = document.getElementById('teams-display-title'); 
+
+
+        document.getElementById('current-year-footer').textContent = new Date().getFullYear();
+
+        function showMessage(htmlContent, type = 'success', area = mainMessageArea) {
+            const alertTypeClass = type === 'success' 
+                ? 'bg-green-100 border-green-400 text-green-700' 
+                : (type === 'error' ? 'bg-red-100 border-red-400 text-red-700' : 'bg-blue-100 border-blue-400 text-blue-700');
+            const title = type === 'success' ? '成功' : (type === 'error' ? '错误' : '信息');
+            
+            if (area && typeof area.innerHTML !== 'undefined') {
+                area.innerHTML = `<div class="border-l-4 p-4 ${alertTypeClass}" role="alert">
+                                            <p class="font-bold">${title}</p>
+                                            <div>${htmlContent}</div>
+                                         </div>`;
+                setTimeout(() => {
+                    if (area && area.querySelector && area.querySelector("div > div")) {
+                        const currentMessageDiv = area.querySelector("div > div");
+                         if (currentMessageDiv && currentMessageDiv.innerHTML === htmlContent) {
+                            area.innerHTML = '';
+                        }
+                    }
+                }, 7000);
+            } else {
+                console.warn("showMessage: Provided area is not a valid DOM element or does not have innerHTML property.", area);
+                alert(`${title}: ${htmlContent.replace(/<[^>]*>?/gm, '')}`);
+            }
+        }
+
+        async function sendRequest(url, method, body) {
+            try {
+                const options = {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: body ? JSON.stringify(body) : null
+                };
+                const response = await fetch(url, options);
+                const result = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(result.message || `HTTP error! status: ${response.status}`);
+                }
+                return result;
+            } catch (error) {
+                console.error('Request failed:', error);
+                showMessage(`操作失败: ${error.message}`, 'error');
+                return null; 
+            }
+        }
+
+        function getTeamDataFromForm() {
+            const userId = userIdInput.value.trim();
+            const secretKey = secretKeyInput.value.trim();
+            const sessionId = sessionIdInput.value.trim();
+            const amountNeededStr = amountNeededInput.value.trim();
+            const teamInviteLink = teamInviteLinkInput.value.trim();
+
+            if (!sessionId || !userId || !secretKey || !amountNeededStr || !teamInviteLink) {
+                showMessage("请填写所有必填字段（场次、用户ID、密钥、金额、链接）。", 'error');
+                return null;
+            }
+            const amountNeeded = parseInt(amountNeededStr, 10);
+
+            if (isNaN(amountNeeded) || amountNeeded < 0) {
+                 showMessage("队伍还差金额必须是一个大于或等于0的数字。", 'error');
+                return null;
+            }
+            return { sessionId, userId, secretKey, amountNeeded, teamInviteLink };
+        }
+
+        async function initiateTeam() {
+            const data = getTeamDataFromForm();
+            if (!data) return;
+
+            const result = await sendRequest('/api/initiate_team_posting', 'POST', data);
+            if (result && result.success) {
+                showMessage(result.message, 'success');
+                fetchUserTeams(); 
+                fetchAllActiveTeams(); 
+            } else if (result && result.message) {
+                showMessage(result.message, 'error');
+            }
+        }
+
+        async function updateTeam() {
+            const data = getTeamDataFromForm();
+            if (!data) return;
+
+            const result = await sendRequest('/api/update_team_posting', 'POST', data);
+            if (result && result.success) {
+                showMessage(result.message, 'success');
+                fetchUserTeams(); 
+                fetchAllActiveTeams(); 
+            } else if (result && result.message) {
+                showMessage(result.message, 'error');
+            }
+        }
+
+        async function deleteTeam() {
+            const userId = userIdInput.value.trim();
+            const secretKey = secretKeyInput.value.trim();
+            const sessionId = sessionIdInput.value.trim();
+
+            if (!sessionId || !userId || !secretKey) {
+                showMessage("请输入场次编号、用户ID和密钥以删除队伍。", 'error');
+                return;
+            }
+
+            if (!confirm(`确定要删除您为场次编号 '${sessionId}' 发起的队伍信息吗？此操作无法撤销。`)) {
+                return;
+            }
+
+            const result = await sendRequest('/api/delete_team_posting', 'POST', { sessionId, userId, secretKey });
+            if (result && result.success) {
+                showMessage(result.message, 'success');
+                fetchUserTeams(); 
+                fetchAllActiveTeams(); 
+            } else if (result && result.message) {
+                showMessage(result.message, 'error');
+            }
+        }
+        
+        async function fetchUserTeams() {
+            const userIdVal = userIdInput.value.trim(); 
+            if (!userIdVal) { 
+                renderTeams([], userTeamsListDiv, true, "我发起的队伍"); 
+                return;
+            }
+            
+            userTeamsListDiv.innerHTML = '<p class="text-gray-500">正在加载您的队伍...</p>';
+            const result = await sendRequest(`/api/get_user_team_postings?user_id=${encodeURIComponent(userIdVal)}`, 'GET');
+
+            if (result && result.success) {
+                renderTeams(result.teams, userTeamsListDiv, true, "我发起的队伍");
+            } else {
+                 userTeamsListDiv.innerHTML = `<p class="text-red-500 italic">加载队伍失败: ${result ? result.message : '未知错误'}</p>`;
+            }
+        }
+
+        async function fetchAllActiveTeams(isExplicitAction = false) {
+            const filterSessionId = filterSessionIdInput.value.trim();
+            let url = '/api/get_all_active_teams';
+            let title = "所有公开队伍";
+
+            if (filterSessionId) {
+                url += `?session_id=${encodeURIComponent(filterSessionId)}`;
+                title = `场次 "${filterSessionId}" 的队伍`;
+                if(isExplicitAction) showMessage(`正在筛选场次编号为 "${filterSessionId}" 的队伍。`, 'info');
+            } else {
+                 if(isExplicitAction) showMessage('正在获取所有公开队伍。', 'info');
+            }
+            
+            teamsDisplayListDiv.innerHTML = '<p class="text-gray-500">正在加载...</p>';
+            const result = await sendRequest(url, 'GET');
+
+            if (result && result.success) {
+                renderTeams(result.teams, teamsDisplayListDiv, false, title, teamsDisplayTitle);
+            } else {
+                teamsDisplayTitle.textContent = title; 
+                teamsDisplayListDiv.innerHTML = `<p class="text-red-500 italic">加载队伍失败: ${result ? result.message : '未知错误'}</p>`;
+            }
+        }
+        
+        async function findPerfectMatch() {
+            const userIdForMatch = perfectMatchUserIdInput.value.trim();
+            const currentFilterSessionId = filterSessionIdInput.value.trim();
+
+            if (!userIdForMatch) {
+                showMessage("请输入用户ID以查找完美符合的队伍。", 'error', mainMessageArea);
+                renderTeams([], teamsDisplayListDiv, false, "请输入用户ID进行查找", teamsDisplayTitle);
+                return;
+            }
+
+            let perfectMatchTitleText = `用户 '${userIdForMatch}' 完美符合的队伍`;
+            let apiUrl = `/api/find_perfect_match_teams?user_id=${encodeURIComponent(userIdForMatch)}`;
+
+            if (currentFilterSessionId) {
+                perfectMatchTitleText += ` (在场次 '${currentFilterSessionId}' 内)`;
+                apiUrl += `&session_id=${encodeURIComponent(currentFilterSessionId)}`;
+            }
+            
+            teamsDisplayListDiv.innerHTML = `<p class="text-gray-500">正在为用户 '${userIdForMatch}' 查找...</p>`;
+            showMessage(`正在为用户 '${userIdForMatch}' 查找完美符合的队伍${currentFilterSessionId ? ` (场次: ${currentFilterSessionId})` : ''}...`, 'info');
+
+            try {
+                const result = await sendRequest(apiUrl, 'GET');
+
+                if (result && result.success) {
+                    const matchedTeams = result.teams;
+                    const userAmountsChecked = result.user_amounts_checked || [];
+
+                    if (matchedTeams.length > 0) {
+                         showMessage(`为用户 '${userIdForMatch}' ${currentFilterSessionId ? `在场次 '${currentFilterSessionId}' 内` : ''} 找到 ${matchedTeams.length} 个完美符合差额的队伍。`, 'success');
+                    } else {
+                        if (result.message && result.message.includes("没有登记金额")) {
+                             showMessage(result.message, 'info'); 
+                        } else {
+                            showMessage(`未找到用户 '${userIdForMatch}' ${currentFilterSessionId ? `在场次 '${currentFilterSessionId}' 内` : ''} 完美符合差额的队伍。该用户拥有的金额为: ${userAmountsChecked.join(', ')}`, 'info');
+                        }
+                    }
+                    renderTeams(matchedTeams, teamsDisplayListDiv, false, perfectMatchTitleText, teamsDisplayTitle);
+                } else {
+                    teamsDisplayTitle.textContent = perfectMatchTitleText; 
+                    teamsDisplayListDiv.innerHTML = `<p class="text-red-500 italic">查找失败: ${result ? result.message : '未知错误'}</p>`;
+                }
+
+            } catch (error) { 
+                console.error('Error in findPerfectMatch (API call process):', error);
+                showMessage(`查找完美符合队伍时发生客户端错误: ${error.message}`, 'error');
+                teamsDisplayTitle.textContent = perfectMatchTitleText;
+                teamsDisplayListDiv.innerHTML = `<p class="text-red-500 italic">查找过程中发生客户端错误。</p>`;
+            }
+        }
+        
+        function copyToClipboard(textToCopy, teamId) {
+            if (!navigator.clipboard) {
+                showMessage('您的浏览器不支持剪贴板 API，无法复制。', 'error');
+                return;
+            }
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                showMessage(`队伍 ${escapeHtml(String(teamId))} 的邀请链接已复制到剪贴板！`, 'success');
+            }).catch(err => {
+                console.error('无法复制文本: ', err);
+                showMessage(`复制链接失败: ${err.message}`, 'error');
+            });
+        }
+
+        function renderTeams(teams, containerElement, isUserTeams, titleText = "队伍列表", titleElement = null) {
+            containerElement.innerHTML = ''; 
+            
+            let actualTitleText = titleText;
+            if (teams && typeof teams.length !== 'undefined') {
+                actualTitleText = `${titleText} (${teams.length} 个)`;
+            }
+
+            if (titleElement) {
+                titleElement.textContent = actualTitleText;
+            } else if (containerElement.id !== 'user-teams-list') { 
+                const titleEl = document.createElement('h4');
+                titleEl.className = 'text-md font-semibold text-gray-700 mb-2';
+                titleEl.textContent = actualTitleText;
+                containerElement.appendChild(titleEl);
+            }
+            
+            if (!teams || teams.length === 0) {
+                const p = document.createElement('p');
+                p.className = 'text-gray-500 italic';
+                if (containerElement.id === 'user-teams-list') {
+                     p.textContent = '您还没有发起任何队伍，或未找到记录。';
+                } else if (containerElement.id === 'teams-display-list') {
+                    if (titleText.includes("完美符合")) {
+                        p.textContent = '未找到完美符合条件的队伍。';
+                    } else if (titleText.includes("场次")) {
+                        p.textContent = '该场次下没有公开队伍。';
+                    } else if (titleText.includes("请输入用户ID")) {
+                         p.textContent = '请输入用户ID以查找完美符合的队伍。';
+                    }
+                     else {
+                        p.textContent = '当前没有公开队伍。';
+                    }
+                } else {
+                    p.textContent = '没有队伍信息。';
+                }
+                containerElement.appendChild(p);
+                return;
+            }
+
+            teams.forEach(team => {
+                const teamCard = document.createElement('div');
+                teamCard.className = 'relative bg-white p-3 rounded-md border border-gray-200 shadow-sm hover:shadow-md transition-shadow'; 
+                
+                const currentFormUserId = userIdInput ? userIdInput.value.trim() : null;
+                let initiatorDisplay = (isUserTeams || (currentFormUserId && team.initiator_user_id === currentFormUserId)) 
+                                       ? '' 
+                                       : `<p class="text-xs text-gray-500">发起人: ${escapeHtml(team.initiator_user_id)}</p>`;
+                
+                let editButtonHtml = '';
+                if (containerElement.id === 'user-teams-list' && isUserTeams && currentFormUserId && team.initiator_user_id === currentFormUserId) {
+                     editButtonHtml = `<button onclick="populateFormForUpdate('${escapeHtml(String(team.session_id))}', '${team.amount_needed}', '${escapeHtml(String(team.team_invite_link))}')" class="text-xs bg-yellow-400 hover:bg-yellow-500 text-white py-1 px-2 rounded mr-1">编辑</button>`;
+                }
+
+                let copyButtonHtml = '';
+                if (containerElement.id === 'teams-display-list' && team.team_invite_link) {
+                    copyButtonHtml = `<button 
+                                        onclick="copyToClipboard('${escapeHtml(String(team.team_invite_link))}', '${escapeHtml(String(team.session_id))}')" 
+                                        title="复制邀请链接"
+                                        class="copy-link-btn bg-blue-500 hover:bg-blue-600 text-white">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                          <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                        </svg>
+                                      </button>`;
+                }
+
+                teamCard.innerHTML = `
+                    ${copyButtonHtml}
+                    <h5 class="font-semibold text-md text-indigo-700">场次: ${escapeHtml(team.session_id)}</h5>
+                    ${initiatorDisplay}
+                    <p class="text-sm text-gray-700">还差金额: <strong class="text-red-600 font-bold text-lg">${team.amount_needed}</strong></p>
+                    <p class="text-sm text-gray-600 truncate" title="邀请链接: ${escapeHtml(team.team_invite_link)}">邀请链接: ${escapeHtml(team.team_invite_link)}</p>
+                    <div class="mt-2">
+                        ${editButtonHtml}
+                    </div>
+                `;
+                containerElement.appendChild(teamCard);
+            });
+        }
+        
+        function populateFormForUpdate(sessionId, amountNeeded, inviteLink) {
+            sessionIdInput.value = sessionId; 
+            amountNeededInput.value = amountNeeded; 
+            teamInviteLinkInput.value = inviteLink; 
+            
+            sessionIdInput.focus(); 
+            showMessage("信息已填充到上方“我的队伍操作”表单，请修改后点击“更新队伍信息”。", 'info');
+            
+            const formSection = document.querySelector('.mb-10.border-b.pb-6'); 
+            if (formSection) {
+                formSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } else {
+                window.scrollTo(0,0); 
+            }
+        }
+
+        function escapeHtml(unsafe) {
+            if (unsafe === null || typeof unsafe === 'undefined') return '';
+            return String(unsafe)
+                 .replace(/&/g, "&amp;")
+                 .replace(/</g, "&lt;")
+                 .replace(/>/g, "&gt;")
+                 .replace(/"/g, "&quot;")
+                 .replace(/'/g, "&#039;");
+        }
+        
+        document.addEventListener('DOMContentLoaded', () => {
+           fetchAllActiveTeams(); 
+           teamsDisplayTitle.textContent = "队伍列表"; 
+           renderTeams([], userTeamsListDiv, true, "我发起的队伍"); 
+        });
+
+    </script>
+</body>
+</html>

@@ -3,22 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>商品金额录入 - Tailwind UI</title>
+    <title>我的账户</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-    <style>
-        /* 之前用于高亮系统生成密钥的样式，现在可能不需要了，但保留无妨 */
-        .highlight-secret {
-            background-color: #fefcbf; 
-            padding: 2px 4px;
-            border-radius: 3px;
-            font-weight: bold;
-        }
-    </style>
 </head>
 <body class="bg-gray-100 text-gray-800 antialiased flex flex-col min-h-screen">
     <div class="container mx-auto max-w-3xl py-8 px-4 sm:px-6 lg:px-8 flex-grow">
         <div class="bg-white shadow-lg rounded-lg p-6 md:p-8">
-            <h1 class="text-2xl sm:text-3xl font-bold text-gray-900 mb-6 text-center">订单金额管理</h1>
+            <h1 class="text-2xl sm:text-3xl font-bold text-gray-900 mb-6 text-center">我的账户</h1>
             
             <div id="message-area" class="mb-4"></div>
 
@@ -90,7 +81,9 @@
 
             <div class="mt-8 text-center">
                 <a href="/find_team" class="text-sm font-medium text-indigo-600 hover:text-indigo-500">
-                    前往查找队伍页面 &rarr;
+                    前往查找队伍组合页面 &rarr;
+                </a>
+                <span class="mx-2 text-gray-400">|</span> <a href="/initiate_team_page" class="text-sm font-medium text-green-600 hover:text-green-500"> 前往组队页面 &rarr;
                 </a>
             </div>
         </div>

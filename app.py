@@ -3,21 +3,21 @@ from flask import Flask, request, render_template, jsonify, g
 import sqlite3
 import os
 import logging
-# import secrets # No longer needed for system-generated keys
+from datetime import datetime
 
 app = Flask(__name__)
-
 app.logger.setLevel(logging.INFO)
 
-# 数据库配置
+# Database_config
 DATABASE = 'team_builder.db'
 
+# --- Database Utility Functions ---
 def get_db():
     """获取数据库连接 (每个请求一个，如果需要)"""
     db = getattr(g, '_database', None)
     if db is None:
         db = g._database = sqlite3.connect(DATABASE)
-        db.row_factory = sqlite3.Row
+        db.row_factory = sqlite3.Row  # Access columns by name
     return db
 
 @app.teardown_appcontext
@@ -27,19 +27,18 @@ def close_connection(exception):
     if db is not None:
         db.close()
 
-# def generate_secret_key(length=32): # No longer needed
-#     """生成一个安全的随机十六进制字符串作为密钥"""
-#     return secrets.token_hex(length // 2)
-
 def init_db():
     """初始化数据库"""
+    # REMINDER for active_teams: If the table exists with the old schema (e.g., with current_team_size),
+    # you need to manually ALTER it or delete the .db file for schema changes to take full effect.
     db_exists = os.path.exists(DATABASE)
     app.logger.info(f"数据库 {DATABASE} {'已存在' if db_exists else '不存在，正在创建...'}")
     try:
-        with app.app_context():
-            conn = sqlite3.connect(DATABASE)
+        with app.app_context(): # Ensures 'g' is available if get_db() uses it
+            conn = get_db() # Use get_db for consistency
             cursor = conn.cursor()
             
+            # Table: user_items
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_items';")
             if not cursor.fetchone():
                 conn.execute('''
@@ -53,6 +52,7 @@ def init_db():
             else:
                 app.logger.info("表 user_items 已存在。")
 
+            # Table: user_secrets
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_secrets';")
             if not cursor.fetchone():
                 conn.execute('''
@@ -65,8 +65,27 @@ def init_db():
             else:
                 app.logger.info("表 user_secrets 已存在。")
             
+            # Table: active_teams (schema updated: no current_team_size)
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='active_teams';")
+            if not cursor.fetchone():
+                conn.execute('''
+                    CREATE TABLE active_teams (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id TEXT NOT NULL,
+                        initiator_user_id TEXT NOT NULL,
+                        amount_needed INTEGER NOT NULL,
+                        team_invite_link TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (initiator_user_id) REFERENCES user_secrets(user_id),
+                        UNIQUE (initiator_user_id, session_id) 
+                    )
+                ''')
+                app.logger.info("表 active_teams 创建成功 (schema updated: no current_team_size)。")
+            else:
+                app.logger.info("表 active_teams 已存在。Ensure schema is up-to-date.")
+            
             conn.commit()
-            conn.close()
             if not db_exists:
                  app.logger.info(f"数据库 {DATABASE} 初始化完成。")
     except sqlite3.Error as e:
@@ -75,23 +94,25 @@ def init_db():
 
 # --- Helper function to verify secret key ---
 def verify_user_secret(db, user_id, provided_secret):
-    # This helper is still useful for existing users
-    if not provided_secret: # This check might be redundant if API enforces secret presence
+    if not provided_secret:
         return False, "密钥不能为空"
     cursor = db.execute('SELECT secret_key FROM user_secrets WHERE user_id = ?', (user_id,))
     secret_row = cursor.fetchone()
-    if not secret_row: # Should not happen if called for existing user context
-        return False, "用户不存在或没有密钥记录"
+    if not secret_row:
+        return False, "用户不存在或尚未设置密钥。请先通过“我的账户”页面添加至少一个金额以注册用户并设置密钥。"
     if secret_row['secret_key'] == provided_secret:
         return True, "密钥验证成功"
     else:
         return False, "密钥无效"
 
-# --- 页面路由 ---
+def get_user_item_values(db, user_id_to_check):
+    cursor = db.execute('SELECT item_value FROM user_items WHERE user_id = ? ORDER BY item_value', (user_id_to_check,))
+    return [row['item_value'] for row in cursor.fetchall()]
 
+# --- Page Rendering Routes ---
 @app.route('/')
 def data_entry_page():
-    current_data = {}
+    current_data = {} # This was for initial display, can be kept or removed if not used by template
     try:
         with get_db() as db:
             cursor = db.execute('SELECT user_id, item_value FROM user_items ORDER BY user_id, item_value')
@@ -106,12 +127,16 @@ def data_entry_page():
         app.logger.error(f"获取数据用于 data_entry_page 失败: {e}")
     return render_template('data_entry.html', all_user_data_initially=current_data)
 
+
 @app.route('/find_team')
 def team_finder_page():
     return render_template('team_finder.html')
 
-# --- API 路由 ---
+@app.route('/initiate_team_page')
+def initiate_team_page_render():
+    return render_template('initiate_team_page.html')
 
+# --- API Routes for User Items & Secrets ---
 @app.route('/api/get_user_items', methods=['GET'])
 def get_user_items():
     user_id = request.args.get('user_id')
@@ -129,7 +154,6 @@ def get_user_items():
 
 @app.route('/api/add_item', methods=['POST'])
 def add_item():
-    """为用户添加商品金额。用户首次添加时，必须提供密钥以创建账户。"""
     data = request.json
     user_id = data.get('user_id')
     item_value_str = data.get('item_value')
@@ -137,9 +161,8 @@ def add_item():
 
     if not user_id or not item_value_str:
         return jsonify({"success": False, "message": "用户ID和商品金额不能为空"}), 400
-    if not user_defined_secret: # Secret is now always required for add_item
+    if not user_defined_secret:
         return jsonify({"success": False, "message": "密钥不能为空。新用户首次添加金额时需设定密钥，现有用户需提供密钥。"}), 400
-
 
     try:
         item_value = int(item_value_str)
@@ -151,7 +174,6 @@ def add_item():
             user_secret_row = cursor.fetchone()
 
             if user_secret_row is None: # New user
-                # Store the user-defined secret
                 db.execute('INSERT INTO user_secrets (user_id, secret_key) VALUES (?, ?)', (user_id, user_defined_secret))
                 app.logger.info(f"新用户 '{user_id}' 创建成功，已设置用户自定义密钥。")
                 message = f"新用户 '{user_id}' 创建成功，已使用您提供的密钥并添加金额 {item_value}。请妥善保管您的密钥。"
@@ -159,12 +181,10 @@ def add_item():
                 stored_secret = user_secret_row['secret_key']
                 if stored_secret != user_defined_secret:
                     app.logger.warning(f"用户 '{user_id}' 添加金额失败: 密钥无效")
-                    return jsonify({"success": False, "message": "密钥无效"}), 403 # Forbidden
+                    return jsonify({"success": False, "message": "密钥无效"}), 403
                 message = f"已为用户 '{user_id}' 添加金额 {item_value} (密钥验证通过)。"
 
-            # Add the item
-            db.execute('INSERT INTO user_items (user_id, item_value) VALUES (?, ?)',
-                       (user_id, item_value))
+            db.execute('INSERT INTO user_items (user_id, item_value) VALUES (?, ?)', (user_id, item_value))
             db.commit()
         
         app.logger.info(f"已为用户 '{user_id}' 添加金额 {item_value}")
@@ -172,7 +192,7 @@ def add_item():
 
     except ValueError:
         return jsonify({"success": False, "message": "商品金额必须是有效的正整数"}), 400
-    except sqlite3.IntegrityError as e: # Catch if user_id somehow already exists in user_secrets but logic failed
+    except sqlite3.IntegrityError as e:
         app.logger.error(f"为用户 '{user_id}' 添加密钥或项目时发生完整性错误: {e}")
         return jsonify({"success": False, "message": "设置用户密钥时出错，可能用户已存在但处理逻辑异常。"}), 500
     except sqlite3.Error as e:
@@ -188,22 +208,16 @@ def delete_item():
 
     if not user_id or not item_value_str:
         return jsonify({"success": False, "message": "用户ID和商品金额不能为空"}), 400
-    if not provided_secret: # Secret is always required for delete_item
+    if not provided_secret:
         return jsonify({"success": False, "message": "密钥不能为空"}), 401
 
     try:
         item_value = int(item_value_str)
         with get_db() as db:
-            # Verify secret first
-            cursor_secret = db.execute('SELECT secret_key FROM user_secrets WHERE user_id = ?', (user_id,))
-            user_secret_row = cursor_secret.fetchone()
+            is_valid, message = verify_user_secret(db, user_id, provided_secret)
+            if not is_valid: # verify_user_secret handles "user not found" case
+                return jsonify({"success": False, "message": message}), 403
 
-            if user_secret_row is None:
-                return jsonify({"success": False, "message": f"用户 '{user_id}' 不存在。"}), 404
-            if user_secret_row['secret_key'] != provided_secret:
-                return jsonify({"success": False, "message": "密钥无效"}), 403
-
-            # Proceed with deletion
             cursor = db.execute('SELECT id FROM user_items WHERE user_id = ? AND item_value = ? LIMIT 1',
                                 (user_id, item_value))
             row = cursor.fetchone()
@@ -230,23 +244,17 @@ def delete_user():
 
     if not user_id:
         return jsonify({"success": False, "message": "用户ID不能为空"}), 400
-    if not provided_secret: # Secret is always required for delete_user
+    if not provided_secret:
         return jsonify({"success": False, "message": "密钥不能为空"}), 401
         
     try:
         with get_db() as db:
-            # Verify secret first
-            cursor_secret = db.execute('SELECT secret_key FROM user_secrets WHERE user_id = ?', (user_id,))
-            user_secret_row = cursor_secret.fetchone()
-
-            if user_secret_row is None: # If user doesn't even exist in secrets, they can't be deleted by this mechanism
-                return jsonify({"success": False, "message": f"用户 '{user_id}' 不存在。"}), 404
-            if user_secret_row['secret_key'] != provided_secret:
-                return jsonify({"success": False, "message": "密钥无效"}), 403
+            is_valid, message = verify_user_secret(db, user_id, provided_secret)
+            if not is_valid: # verify_user_secret handles "user not found" case
+                return jsonify({"success": False, "message": message}), 403
             
-            # Proceed with deletion
             db.execute('DELETE FROM user_items WHERE user_id = ?', (user_id,))
-            db.execute('DELETE FROM user_secrets WHERE user_id = ?', (user_id,)) # Also delete from secrets table
+            db.execute('DELETE FROM user_secrets WHERE user_id = ?', (user_id,))
             db.commit()
 
         app.logger.info(f"已删除用户 '{user_id}' 及其所有商品金额和密钥 (密钥验证通过)")
@@ -273,10 +281,9 @@ def get_all_data():
         app.logger.error(f"获取所有数据失败: {e}")
         return jsonify({"success": False, "message": "数据库查询失败"}), 500
 
-# find_teams function remains unchanged from your provided code
+# --- API Route for Finding Teams  ---
 @app.route('/api/find_teams', methods=['POST'])
 def find_teams():
-    """查找能够凑成指定金额的队伍组合，使用动态规划方法"""
     data = request.json
     initiator_id = data.get('user_id')
     target_sum_str = data.get('target_sum')
@@ -349,50 +356,50 @@ def find_teams():
     app.logger.info(f"目标金额: {target_sum}")
 
     found_teams = []
-    iteration_count = 0
-    combination_count = 0
-    max_team_size = data.get('max_team_size', 10)
-    max_combinations_per_sum = data.get('max_combinations_per_sum', 10)
+    max_team_size = data.get('max_team_size', 10) # Default max team size
+    max_combinations_per_sum = data.get('max_combinations_per_sum', 10) # Optimization
 
     for user_id_item, item_value_item in all_users_items:
-        iteration_count += 1
         for current_target_s in range(target_sum, item_value_item - 1, -1):
             prev_target_s = current_target_s - item_value_item
             if prev_target_s not in dp:
                 continue
 
             prev_combinations_set, prev_combinations_list_orig = dp[prev_target_s]
+            
             prev_combinations_list = prev_combinations_list_orig
             if len(prev_combinations_list_orig) > max_combinations_per_sum:
                 prev_combinations_list = prev_combinations_list_orig[:max_combinations_per_sum]
+
 
             if not prev_combinations_list:
                 continue
 
             current_dp_entry_set, current_dp_entry_list = dp.get(current_target_s, (set(), []))
+            
             if len(current_dp_entry_list) >= max_combinations_per_sum:
                 continue
 
             new_combinations_added_for_current_target_s = False
             for prev_team_list, _ in prev_combinations_list:
-                if len(prev_team_list) >= max_team_size:
+                if len(prev_team_list) >= max_team_size: # Max team size constraint
                     continue 
-                if any(uid == user_id_item for uid, _ in prev_team_list):
+                if any(uid == user_id_item for uid, _ in prev_team_list): # User can't be in team twice
                     continue 
 
                 new_team_list = prev_team_list + [(user_id_item, item_value_item)]
-                team_as_set_for_deduplication = frozenset(new_team_list)
+                team_as_set_for_deduplication = frozenset(new_team_list) # For deduplication
 
                 if team_as_set_for_deduplication not in current_dp_entry_set:
                     current_dp_entry_set.add(team_as_set_for_deduplication)
                     current_dp_entry_list.append((new_team_list, current_target_s))
-                    combination_count += 1
                     new_combinations_added_for_current_target_s = True
                     
                     if current_target_s == target_sum:
                         if any(uid == initiator_id for uid, _ in new_team_list):
                             team_details = [{"user_id": uid, "item_value": val} for uid, val in new_team_list]
-                            if team_details not in found_teams:
+
+                            if team_details not in found_teams: 
                                 found_teams.append(team_details)
                     
                     if len(current_dp_entry_list) >= max_combinations_per_sum:
@@ -401,10 +408,279 @@ def find_teams():
             if new_combinations_added_for_current_target_s:
                  dp[current_target_s] = (current_dp_entry_set, current_dp_entry_list)
     
-    found_teams.sort(key=len)
+    found_teams.sort(key=len) # Sort by team size
     return jsonify({"success": True, "teams": found_teams})
 
+# --- API Routes for Active Team Postings ---
+@app.route('/api/initiate_team_posting', methods=['POST'])
+def initiate_team_posting():
+    data = request.json
+    session_id = data.get('sessionId')
+    user_id = data.get('userId')
+    secret_key = data.get('secretKey')
+    amount_needed = data.get('amountNeeded')
+    team_invite_link = data.get('teamInviteLink')
+
+    if not all([session_id, user_id, secret_key, amount_needed is not None, team_invite_link]):
+        return jsonify({"success": False, "message": "所有字段均为必填项 (场次、用户ID、密钥、所需金额、邀请链接)。"}), 400
+    
+    try:
+        amount_needed = int(amount_needed)
+        if amount_needed < 0:
+            raise ValueError("所需金额不能为负。")
+    except ValueError as e:
+        return jsonify({"success": False, "message": f"输入无效: {e}"}), 400
+
+    with get_db() as db:
+        is_valid, message = verify_user_secret(db, user_id, secret_key)
+        if not is_valid:
+            return jsonify({"success": False, "message": message}), 403
+
+        try:
+            db.execute('''
+                INSERT INTO active_teams (session_id, initiator_user_id, amount_needed, team_invite_link, created_at, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ''', (session_id, user_id, amount_needed, team_invite_link))
+            db.commit()
+            app.logger.info(f"用户 '{user_id}' 为场次 '{session_id}' 发起组队成功。")
+            return jsonify({"success": True, "message": "组队发起成功！"})
+        except sqlite3.IntegrityError:
+            app.logger.warning(f"用户 '{user_id}' 尝试为场次 '{session_id}' 重复发起组队。")
+            return jsonify({"success": False, "message": "您已经为该场次发起过组队。如需修改，请使用更新功能。"}), 409
+        except sqlite3.Error as e:
+            app.logger.error(f"发起组队数据库操作失败: {e}")
+            return jsonify({"success": False, "message": "数据库操作失败，无法发起组队。"}), 500
+
+@app.route('/api/update_team_posting', methods=['POST'])
+def update_team_posting():
+    data = request.json
+    session_id = data.get('sessionId')
+    user_id = data.get('userId')
+    secret_key = data.get('secretKey')
+    amount_needed = data.get('amountNeeded')
+    team_invite_link = data.get('teamInviteLink')
+
+    if not all([session_id, user_id, secret_key, amount_needed is not None, team_invite_link]):
+        return jsonify({"success": False, "message": "所有字段均为必填项。"}), 400
+
+    try:
+        amount_needed = int(amount_needed)
+        if amount_needed < 0:
+            raise ValueError("所需金额不能为负。")
+    except ValueError as e:
+        return jsonify({"success": False, "message": f"输入无效: {e}"}), 400
+
+    with get_db() as db:
+        is_valid, message = verify_user_secret(db, user_id, secret_key)
+        if not is_valid:
+            return jsonify({"success": False, "message": message}), 403
+        
+        try:
+            cursor = db.execute('''
+                UPDATE active_teams 
+                SET amount_needed = ?, team_invite_link = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE initiator_user_id = ? AND session_id = ?
+            ''', (amount_needed, team_invite_link, user_id, session_id))
+            db.commit()
+            if cursor.rowcount == 0:
+                app.logger.warning(f"用户 '{user_id}' 尝试更新不存在的场次 '{session_id}' 队伍信息，或非本人队伍。")
+                return jsonify({"success": False, "message": "未找到您发起的该场次队伍信息，或更新失败。"}), 404
+            app.logger.info(f"用户 '{user_id}' 为场次 '{session_id}' 更新组队信息成功。")
+            return jsonify({"success": True, "message": "队伍信息更新成功！"})
+        except sqlite3.Error as e:
+            app.logger.error(f"更新组队信息数据库操作失败: {e}")
+            return jsonify({"success": False, "message": "数据库操作失败，无法更新队伍信息。"}), 500
+
+@app.route('/api/delete_team_posting', methods=['POST'])
+def delete_team_posting():
+    data = request.json
+    session_id = data.get('sessionId')
+    user_id = data.get('userId')
+    secret_key = data.get('secretKey')
+
+    if not all([session_id, user_id, secret_key]):
+        return jsonify({"success": False, "message": "场次编号、用户ID和密钥均为必填项。"}), 400
+
+    with get_db() as db:
+        is_valid, message = verify_user_secret(db, user_id, secret_key)
+        if not is_valid:
+            return jsonify({"success": False, "message": message}), 403
+
+        try:
+            cursor = db.execute('''
+                DELETE FROM active_teams 
+                WHERE initiator_user_id = ? AND session_id = ?
+            ''', (user_id, session_id))
+            db.commit()
+            if cursor.rowcount == 0:
+                app.logger.warning(f"用户 '{user_id}' 尝试删除不存在的场次 '{session_id}' 队伍信息，或非本人队伍。")
+                return jsonify({"success": False, "message": "未找到您发起的该场次队伍信息，或删除失败。"}), 404
+            app.logger.info(f"用户 '{user_id}' 为场次 '{session_id}' 删除组队信息成功。")
+            return jsonify({"success": True, "message": "队伍信息删除成功！"})
+        except sqlite3.Error as e:
+            app.logger.error(f"删除组队信息数据库操作失败: {e}")
+            return jsonify({"success": False, "message": "数据库操作失败，无法删除队伍信息。"}), 500
+
+def _serialize_team_datetime(team_dict):
+    """Helper to convert datetime strings from DB to ISO format for JSON."""
+    if 'created_at' in team_dict and isinstance(team_dict['created_at'], str):
+        try:
+            # SQLite often returns strings like 'YYYY-MM-DD HH:MM:SS'
+            # fromisoformat expects ISO 8601. If it's not, this might fail.
+            # A more robust parsing might be needed if formats vary.
+            dt_obj = datetime.strptime(team_dict['created_at'], '%Y-%m-%d %H:%M:%S')
+            team_dict['created_at'] = dt_obj.isoformat()
+        except ValueError:
+            # If already ISO or another format fromisoformat can handle (like with Z or offset)
+            try:
+                team_dict['created_at'] = datetime.fromisoformat(team_dict['created_at'].replace('Z', '+00:00')).isoformat()
+            except ValueError:
+                 app.logger.warning(f"Could not parse created_at: {team_dict['created_at']}")
+                 pass # Or keep original string if parsing fails
+    elif isinstance(team_dict.get('created_at'), datetime):
+        team_dict['created_at'] = team_dict['created_at'].isoformat()
+
+    if 'updated_at' in team_dict and isinstance(team_dict['updated_at'], str):
+        try:
+            dt_obj = datetime.strptime(team_dict['updated_at'], '%Y-%m-%d %H:%M:%S')
+            team_dict['updated_at'] = dt_obj.isoformat()
+        except ValueError:
+            try:
+                team_dict['updated_at'] = datetime.fromisoformat(team_dict['updated_at'].replace('Z', '+00:00')).isoformat()
+            except ValueError:
+                app.logger.warning(f"Could not parse updated_at: {team_dict['updated_at']}")
+                pass
+    elif isinstance(team_dict.get('updated_at'), datetime):
+        team_dict['updated_at'] = team_dict['updated_at'].isoformat()
+    return team_dict
+
+
+@app.route('/api/get_user_team_postings', methods=['GET'])
+def get_user_team_postings():
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({"success": False, "message": "请提供用户ID"}), 400
+    
+    teams_data = []
+    try:
+        with get_db() as db:
+            cursor = db.execute('''
+                SELECT id, session_id, initiator_user_id, amount_needed, team_invite_link, created_at, updated_at 
+                FROM active_teams 
+                WHERE initiator_user_id = ? 
+                ORDER BY updated_at DESC
+            ''', (user_id,))
+            raw_teams = cursor.fetchall()
+            for row in raw_teams:
+                teams_data.append(_serialize_team_datetime(dict(row)))
+        return jsonify({"success": True, "teams": teams_data})
+    except sqlite3.Error as e:
+        app.logger.error(f"获取用户 '{user_id}' 的队伍列表失败: {e}")
+        return jsonify({"success": False, "message": "数据库查询失败"}), 500
+    except Exception as e:
+        app.logger.error(f"获取用户队伍时发生意外错误: {e}")
+        return jsonify({"success": False, "message": f"处理请求时发生意外错误: {str(e)}"}), 500
+
+
+@app.route('/api/get_all_active_teams', methods=['GET'])
+def get_all_active_teams():
+    teams_data = []
+    session_id_filter = request.args.get('session_id') # Get session_id from request
+    
+    query_sql = '''
+        SELECT id, session_id, initiator_user_id, amount_needed, team_invite_link, created_at, updated_at 
+        FROM active_teams 
+        WHERE amount_needed > 0 
+    '''
+    params = []
+
+    # Add session_id filter if provided
+    if session_id_filter and session_id_filter.strip():
+        query_sql += " AND session_id = ? "
+        params.append(session_id_filter.strip())
+    
+    query_sql += " ORDER BY updated_at DESC "
+
+    try:
+        with get_db() as db:
+            cursor = db.execute(query_sql, tuple(params)) # Pass params as a tuple
+            raw_teams = cursor.fetchall()
+            for row in raw_teams:
+                teams_data.append(_serialize_team_datetime(dict(row)))
+        return jsonify({"success": True, "teams": teams_data})
+    except sqlite3.Error as e:
+        app.logger.error(f"获取所有活动队伍列表失败: {e}")
+        return jsonify({"success": False, "message": "数据库查询失败"}), 500
+    except Exception as e:
+        app.logger.error(f"获取所有活动队伍时发生意外错误: {e}")
+        return jsonify({"success": False, "message": f"处理请求时发生意外错误: {str(e)}"}), 500
+
+@app.route('/api/find_perfect_match_teams', methods=['GET'])
+def find_perfect_match_teams_api():
+    user_id_for_match = request.args.get('user_id')
+    session_id_filter = request.args.get('session_id') # Optional
+
+    if not user_id_for_match:
+        return jsonify({"success": False, "message": "请提供用于匹配的用户ID。"}), 400
+
+    matched_teams_data = []
+    try:
+        with get_db() as db:
+            # 1. Get item values for the user_id_for_match
+            user_amounts = get_user_item_values(db, user_id_for_match)
+            if not user_amounts:
+                app.logger.info(f"用户 '{user_id_for_match}' 没有登记金额，无法查找完美符合的队伍。")
+                return jsonify({
+                    "success": True, # Operation successful, but no matches due to no user items
+                    "teams": [],
+                    "message": f"用户 '{user_id_for_match}' 没有登记金额。"
+                })
+
+            # 2. Get active teams, potentially filtered by session_id
+            query_sql = '''
+                SELECT id, session_id, initiator_user_id, amount_needed, team_invite_link, created_at, updated_at 
+                FROM active_teams 
+                WHERE amount_needed > 0 
+            '''
+            params = []
+
+            if session_id_filter and session_id_filter.strip():
+                query_sql += " AND session_id = ? "
+                params.append(session_id_filter.strip())
+            
+            query_sql += " ORDER BY updated_at DESC "
+            
+            cursor = db.execute(query_sql, tuple(params))
+            candidate_teams_raw = cursor.fetchall()
+
+            # 3. Filter candidate teams against user's amounts
+            for row in candidate_teams_raw:
+                team_dict = dict(row)
+                # Ensure amount_needed is treated as an integer for comparison
+                try:
+                    amount_needed_val = int(team_dict['amount_needed'])
+                    if amount_needed_val in user_amounts:
+                        matched_teams_data.append(_serialize_team_datetime(team_dict))
+                except ValueError:
+                    app.logger.warning(f"队伍 ID {team_dict.get('id')} 的 amount_needed '{team_dict.get('amount_needed')}' 不是有效的整数。")
+                    continue # Skip this team if amount_needed is not a valid integer
+
+        app.logger.info(f"为用户 '{user_id_for_match}' (金额: {user_amounts}) 在场次 '{session_id_filter or '所有'}' 中找到 {len(matched_teams_data)} 个完美符合的队伍。")
+        return jsonify({
+            "success": True,
+            "teams": matched_teams_data,
+            "user_amounts_checked": user_amounts # Optionally return what amounts were checked against
+        })
+
+    except sqlite3.Error as e:
+        app.logger.error(f"查找完美符合队伍时数据库查询失败: {e}")
+        return jsonify({"success": False, "message": "数据库查询失败"}), 500
+    except Exception as e:
+        app.logger.error(f"查找完美符合队伍时发生意外错误: {e}")
+        return jsonify({"success": False, "message": f"处理请求时发生意外错误: {str(e)}"}), 500
+
+# --- Main Execution ---
 if __name__ == '__main__':
-    with app.app_context():
+    with app.app_context(): # Create an application context for init_db
         init_db() 
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0')
