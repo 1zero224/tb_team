@@ -427,9 +427,10 @@
                 teamCard.className = 'relative bg-white p-3 rounded-md border border-gray-200 shadow-sm hover:shadow-md transition-shadow'; 
                 
                 const currentFormUserId = userIdInput ? userIdInput.value.trim() : null;
-                let initiatorDisplay = (isUserTeams || (currentFormUserId && team.initiator_user_id === currentFormUserId)) 
-                                       ? '' 
-                                       : `<p class="text-xs text-gray-500">发起人: ${escapeHtml(team.initiator_user_id)}</p>`;
+                let initiatorDisplay = '';
+                if (!isUserTeams) {
+                    initiatorDisplay = `<p class="text-xs text-gray-500">发起人: ${escapeHtml(team.initiator_user_id)}</p>`;
+                }
                 
                 let editButtonHtml = '';
                 if (containerElement.id === 'user-teams-list' && isUserTeams && currentFormUserId && team.initiator_user_id === currentFormUserId) {

@@ -3,7 +3,6 @@ from flask import Flask, request, render_template, jsonify, g
 import sqlite3
 import os
 import logging
-from datetime import datetime
 
 app = Flask(__name__)
 app.logger.setLevel(logging.INFO)
@@ -29,8 +28,6 @@ def close_connection(exception):
 
 def init_db():
     """初始化数据库"""
-    # REMINDER for active_teams: If the table exists with the old schema (e.g., with current_team_size),
-    # you need to manually ALTER it or delete the .db file for schema changes to take full effect.
     db_exists = os.path.exists(DATABASE)
     app.logger.info(f"数据库 {DATABASE} {'已存在' if db_exists else '不存在，正在创建...'}")
     try:
@@ -112,7 +109,7 @@ def get_user_item_values(db, user_id_to_check):
 # --- Page Rendering Routes ---
 @app.route('/')
 def data_entry_page():
-    current_data = {} # This was for initial display, can be kept or removed if not used by template
+    current_data = {} 
     try:
         with get_db() as db:
             cursor = db.execute('SELECT user_id, item_value FROM user_items ORDER BY user_id, item_value')
@@ -255,10 +252,12 @@ def delete_user():
             
             db.execute('DELETE FROM user_items WHERE user_id = ?', (user_id,))
             db.execute('DELETE FROM user_secrets WHERE user_id = ?', (user_id,))
+            # Also delete any active teams initiated by this user
+            db.execute('DELETE FROM active_teams WHERE initiator_user_id = ?', (user_id,))
             db.commit()
 
-        app.logger.info(f"已删除用户 '{user_id}' 及其所有商品金额和密钥 (密钥验证通过)")
-        return jsonify({"success": True, "message": f"已成功删除用户 '{user_id}' 及其所有数据和密钥"})
+        app.logger.info(f"已删除用户 '{user_id}' 及其所有商品金额、密钥以及发起的队伍 (密钥验证通过)")
+        return jsonify({"success": True, "message": f"已成功删除用户 '{user_id}' 及其所有数据、密钥和发起的队伍"})
     except sqlite3.Error as e:
         app.logger.error(f"删除用户 '{user_id}' 失败: {e}")
         return jsonify({"success": False, "message": "数据库操作失败"}), 500
@@ -521,39 +520,6 @@ def delete_team_posting():
             app.logger.error(f"删除组队信息数据库操作失败: {e}")
             return jsonify({"success": False, "message": "数据库操作失败，无法删除队伍信息。"}), 500
 
-def _serialize_team_datetime(team_dict):
-    """Helper to convert datetime strings from DB to ISO format for JSON."""
-    if 'created_at' in team_dict and isinstance(team_dict['created_at'], str):
-        try:
-            # SQLite often returns strings like 'YYYY-MM-DD HH:MM:SS'
-            # fromisoformat expects ISO 8601. If it's not, this might fail.
-            # A more robust parsing might be needed if formats vary.
-            dt_obj = datetime.strptime(team_dict['created_at'], '%Y-%m-%d %H:%M:%S')
-            team_dict['created_at'] = dt_obj.isoformat()
-        except ValueError:
-            # If already ISO or another format fromisoformat can handle (like with Z or offset)
-            try:
-                team_dict['created_at'] = datetime.fromisoformat(team_dict['created_at'].replace('Z', '+00:00')).isoformat()
-            except ValueError:
-                 app.logger.warning(f"Could not parse created_at: {team_dict['created_at']}")
-                 pass # Or keep original string if parsing fails
-    elif isinstance(team_dict.get('created_at'), datetime):
-        team_dict['created_at'] = team_dict['created_at'].isoformat()
-
-    if 'updated_at' in team_dict and isinstance(team_dict['updated_at'], str):
-        try:
-            dt_obj = datetime.strptime(team_dict['updated_at'], '%Y-%m-%d %H:%M:%S')
-            team_dict['updated_at'] = dt_obj.isoformat()
-        except ValueError:
-            try:
-                team_dict['updated_at'] = datetime.fromisoformat(team_dict['updated_at'].replace('Z', '+00:00')).isoformat()
-            except ValueError:
-                app.logger.warning(f"Could not parse updated_at: {team_dict['updated_at']}")
-                pass
-    elif isinstance(team_dict.get('updated_at'), datetime):
-        team_dict['updated_at'] = team_dict['updated_at'].isoformat()
-    return team_dict
-
 
 @app.route('/api/get_user_team_postings', methods=['GET'])
 def get_user_team_postings():
@@ -571,8 +537,7 @@ def get_user_team_postings():
                 ORDER BY updated_at DESC
             ''', (user_id,))
             raw_teams = cursor.fetchall()
-            for row in raw_teams:
-                teams_data.append(_serialize_team_datetime(dict(row)))
+            teams_data = [dict(row) for row in raw_teams] # FIX: Convert raw_teams to list of dicts
         return jsonify({"success": True, "teams": teams_data})
     except sqlite3.Error as e:
         app.logger.error(f"获取用户 '{user_id}' 的队伍列表失败: {e}")
@@ -605,8 +570,7 @@ def get_all_active_teams():
         with get_db() as db:
             cursor = db.execute(query_sql, tuple(params)) # Pass params as a tuple
             raw_teams = cursor.fetchall()
-            for row in raw_teams:
-                teams_data.append(_serialize_team_datetime(dict(row)))
+            teams_data = [dict(row) for row in raw_teams] # FIX: Convert raw_teams to list of dicts
         return jsonify({"success": True, "teams": teams_data})
     except sqlite3.Error as e:
         app.logger.error(f"获取所有活动队伍列表失败: {e}")
@@ -631,7 +595,7 @@ def find_perfect_match_teams_api():
             if not user_amounts:
                 app.logger.info(f"用户 '{user_id_for_match}' 没有登记金额，无法查找完美符合的队伍。")
                 return jsonify({
-                    "success": True, # Operation successful, but no matches due to no user items
+                    "success": True, 
                     "teams": [],
                     "message": f"用户 '{user_id_for_match}' 没有登记金额。"
                 })
@@ -656,11 +620,11 @@ def find_perfect_match_teams_api():
             # 3. Filter candidate teams against user's amounts
             for row in candidate_teams_raw:
                 team_dict = dict(row)
-                # Ensure amount_needed is treated as an integer for comparison
                 try:
                     amount_needed_val = int(team_dict['amount_needed'])
+                    # FIX: Add logic to append to matched_teams_data if a match is found
                     if amount_needed_val in user_amounts:
-                        matched_teams_data.append(_serialize_team_datetime(team_dict))
+                        matched_teams_data.append(team_dict)
                 except ValueError:
                     app.logger.warning(f"队伍 ID {team_dict.get('id')} 的 amount_needed '{team_dict.get('amount_needed')}' 不是有效的整数。")
                     continue # Skip this team if amount_needed is not a valid integer
@@ -669,7 +633,7 @@ def find_perfect_match_teams_api():
         return jsonify({
             "success": True,
             "teams": matched_teams_data,
-            "user_amounts_checked": user_amounts # Optionally return what amounts were checked against
+            "user_amounts_checked": user_amounts 
         })
 
     except sqlite3.Error as e:
@@ -681,6 +645,6 @@ def find_perfect_match_teams_api():
 
 # --- Main Execution ---
 if __name__ == '__main__':
-    with app.app_context(): # Create an application context for init_db
+    with app.app_context(): 
         init_db() 
     app.run(debug=True, host='0.0.0.0')
